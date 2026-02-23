@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>APO Economic Indicator Dashboard</title>
-  <link rel="stylesheet" href="styles.css?v=20260220"/>
+  <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
   <div class="app">
@@ -19,16 +19,22 @@
 
       <div class="nav">
         <button class="navItem active" data-view="summary">Summary</button>
-        <button class="navItem" data-view="indicators">Indicators</button>
-        <button class="navItem" data-view="trends">Trends</button>
-        <button class="navItem" data-view="profile">Country profile</button>
-        <button class="navItem" data-view="data">Data</button>
-      </div>
+<button class="navItem" data-view="profile">Country profile</button>
+</div>
 
       <div class="panel" id="indicatorPanel">
-        <div class="panelTitle">Indicators</div>
-        <div class="panelHint">Select one to compare economies</div>
-        <div class="indicatorList" id="indicatorList"></div>
+        <div class="panelTopRow">
+          <div>
+            <div class="panelTitle">Indicators</div>
+            <div class="panelHint">Browse by category; choose a view/mode.</div>
+          </div>
+          <div class="panelActions">
+            <button class="iconBtn" id="menuCollapseAllBtn" title="Collapse all" aria-label="Collapse all">−</button>
+            <button class="iconBtn" id="menuExpandAllBtn" title="Expand all" aria-label="Expand all">+</button>
+          </div>
+        </div>
+        <input class="menuSearch" id="menuSearch" placeholder="Search indicator…"/>
+        <div class="indicatorList menuTree" id="indicatorList"></div>
       </div>
 
       <div class="footer">
@@ -37,9 +43,14 @@
       </div>
     </aside>
 
+    <div class="sidebarOverlay hidden" id="sidebarOverlay"></div>
+
     <main class="main">
       <div class="topbar">
-        <div class="crumbs" id="crumbs">Summary</div>
+        <div class="topbarLeft">
+          <button class="iconBtn" id="sidebarToggle" aria-label="Open menu">☰</button>
+          <div class="crumbs" id="crumbs">Summary</div>
+        </div>
         <div class="topbarRight">
           <div class="seg" id="themeSeg" aria-label="Theme switch">
             <button class="segBtn active" data-theme="violet">Violet</button>
@@ -93,30 +104,47 @@
         <div class="view hidden" id="view-trends">
           <div class="card">
             <div class="cardHeader">
-              <h2>Trends</h2>
-              <p class="muted">Time series view (1970–2023). Default is one economy; use compare to add more.</p>
-            </div>
-
-            <div class="trendControls">
-              <label>
-                Indicator
-                <select id="tsIndicatorSelect"></select>
-              </label>
-
-              <label>
-                Primary economy
-                <select id="tsEconomySelect"></select>
-              </label>
-
-              <div class="trendActions">
-                <button id="tsCompareBtn" class="btnInlineGhost" type="button">Compare economies</button>
+              <div>
+                <h2 style="margin:0;">Trend &amp; compare</h2>
+                <p class="muted" style="margin:6px 0 0 0;">Select economies to compare long-run movements. (Time series: 1970–2023)</p>
               </div>
             </div>
 
-            <div id="tsComparePanel" class="comparePanel hidden"></div>
+            <div class="trendLayout">
+              <aside class="trendSide">
+                <div class="trendSideTop">
+                  <div class="trendSideTitle">Economies</div>
+                  <input id="tsEconomySearch" class="menuSearch" placeholder="Search economy…" />
+                  <div class="trendSideActions">
+                    <button id="tsAllOn" class="btnInlineGhost" type="button">All on</button>
+                    <button id="tsAllOff" class="btnInlineGhost" type="button">All off</button>
+                  </div>
+                </div>
+                <div id="tsEconomyChecklist" class="trendChecklist"></div>
+              </aside>
 
-            <div id="tsChart" class="tsChart"></div>
-            <div id="tsFootnote" class="muted small" style="margin-top:10px;"></div>
+              <section class="trendMain">
+                <div class="trendTopRow">
+                  <div>
+                    <div class="cardTitle" id="tsSelectedIndicatorLabel">Indicator</div>
+                    <div class="cardSub" id="tsSelectedIndicatorSub">Choose an indicator from the left menu.</div>
+                  </div>
+                  <div class="trendIndicatorPicker" id="tsIndicatorPicker">
+                    <label>
+                      Indicator
+                      <select id="tsIndicatorSelect"></select>
+                    </label>
+                    <label>
+                      Primary economy
+                      <select id="tsEconomySelect"></select>
+                    </label>
+                  </div>
+                </div>
+
+                <div id="tsChart" class="tsChart"></div>
+                <div id="tsFootnote" class="muted small" style="margin-top:10px;"></div>
+              </section>
+            </div>
           </div>
         </div>
 
@@ -157,6 +185,7 @@
   </div>
 
   <script src="data.js"></script>
-  <script src="app.js?v=20260220"></script>
+  <script src="menu.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

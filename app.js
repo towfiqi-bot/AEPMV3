@@ -22,6 +22,107 @@ const DEFAULT_INDICATORS = [
   { id:"TFP_growth_2223_pct", label:"TFP growth (2022–23)", unit:"Percent", fmt:"0.0", proj:"TFP_growth_proj_2530_pct" },
 ];
 
+/** -------- Menu (UI-only, generated from APO_Menu_Structure_v1.xlsx) -------- */
+const MENU_TREE = Array.isArray(window.APO_MENU) ? window.APO_MENU : [];
+
+function _normKey(s){
+  return String(s||"").toLowerCase().replace(/[^a-z0-9]+/g,"");
+}
+
+/* Map wireframe indicator names -> current data.js indicator IDs (UI-only).
+   If an indicator is missing in data.js, the UI renders it as "Coming soon". */
+const MENU_TO_INDICATOR_ID = {
+  realgdp: "GDP_PPP_2023_bn",
+  realgdpgrowth: "GDP_growth_2223_pct",
+  percapitarealgdp: "GDPpc_PPP_2023_kUSD",
+  population: "Population_2022_m",
+  numberofemployment: "Employment_2023_thousand",
+  employmentrate: "Employment_rate_2023_pct",
+
+  perworkerlaborproductivity: "LP_level_per_worker_2023_kUSD",
+  perworkerlaborproductivitygrowth: "LP_growth_2223_pct",
+  perhourlaborproductivity: "LP_level_per_hour_2023_USD",
+  perhourlaborproductivitygrowth: "LP_growth_per_hour_2223_pct",
+
+  agriculturegdpshare: "Agri_share_GDP_2023_pct",
+  manufacturinggdpshare: "Mfg_share_GDP_2023_pct",
+
+  capitalproductivitygrowth: "Capital_prod_growth_2223_pct",
+  tfpgrowth: "TFP_growth_2223_pct",
+};
+
+/* Map wireframe indicator names -> trends time-series codes (best-effort).
+   If missing, "Trend & Compare" shows as disabled. */
+const MENU_TO_TS_CODE = {
+  realgdp: "22700.0", // GDP at market price (billions of US dollars, as of 2023)
+  population: "70100.0",
+  numberofemployment: "60100.0",
+  perworkerlaborproductivity: "40300.0",
+  perhourlaborproductivity: "40200.0",
+  tfpgrowth: "40100.0",
+};
+
+let _menuOpenGroups = new Set(loadLS("apo_menu_open_groups_v1", []) || []);
+let _menuOpenIndicators = new Set(loadLS("apo_menu_open_inds_v1", []) || []);
+let _menuQuery = "";
+let _menuInitDone = false;
+
+function saveMenuOpenState(){
+  saveLS("apo_menu_open_groups_v1", Array.from(_menuOpenGroups));
+  saveLS("apo_menu_open_inds_v1", Array.from(_menuOpenIndicators));
+}
+
+/* Tiny toast (UI-only). */
+let _toastTimer = null;
+function showToast(msg){
+  const id = "apoToast";
+  let el = document.getElementById(id);
+  if(!el){
+    el = document.createElement("div");
+    el.id = id;
+    el.style.position = "fixed";
+    el.style.left = "50%";
+    el.style.bottom = "16px";
+    el.style.transform = "translateX(-50%)";
+    el.style.zIndex = "999";
+    el.style.background = "rgba(0,0,0,.65)";
+    el.style.color = "white";
+    el.style.padding = "10px 12px";
+    el.style.borderRadius = "14px";
+    el.style.border = "1px solid rgba(255,255,255,.25)";
+    el.style.maxWidth = "min(520px, 92vw)";
+    el.style.fontWeight = "650";
+    el.style.boxShadow = "0 14px 40px rgba(0,0,0,.35)";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = "1";
+  if(_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(()=>{ el.style.opacity = "0"; }, 2200);
+}
+
+function inferRefPeriodFromLabel(label){
+  const s = String(label||"");
+  const m = s.match(/\(([^)]*)\)\s*$/); // last (...)
+  if(!m) return null;
+  const inner = m[1];
+  const yr = inner.match(/(19|20)\d{2}(?:\s*[–-]\s*(?:19|20)?\d{2,4})?/);
+  if(yr) return yr[0].replace(/\s+/g," ").replace("-", "–");
+  return null;
+}
+
+function resolveIndicatorForMenu(menuIndName){
+  const key = _normKey(menuIndName);
+  const mappedId = MENU_TO_INDICATOR_ID[key];
+  const ind = mappedId ? getIndicator(mappedId) : null;
+  return { key, mappedId, ind };
+}
+
+function resolveTsCodeForMenu(menuIndName){
+  const key = _normKey(menuIndName);
+  return MENU_TO_TS_CODE[key] || null;
+}
+
 /** -------- Helpers -------- */
 const $ = (sel)=>document.querySelector(sel);
 const $$ = (sel)=>Array.from(document.querySelectorAll(sel));
@@ -45,31 +146,6 @@ function fmtNumber(x, decimals=null){
   if(decimals === null) return x.toLocaleString();
   return x.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-
-// Compact numeric formatter used by the Trends renderer (ticks/tooltips without units).
-function fmt(x, decimals=2){
-  return fmtNumber(x, decimals);
-}
-
-// Old-dashboard-inspired grouping (modern, collapsible). Keywords are best-effort; can be overridden later via JSON.
-function indicatorGroup(ind){
-  const t = String(ind?.label || "").toLowerCase();
-  if(/\b(tf(p)?|productivity)\b/.test(t)) return "Productivity";
-  if(/\b(gdp|manufacturing|agriculture|construction|service|exports|imports|output)\b/.test(t)) return "Output";
-  if(/\b(labor|employment|per-worker|per worker|per-hour|per hour|hours worked|workers)\b/.test(t)) return "Labor";
-  if(/\b(capital|investment|stock|deepening)\b/.test(t)) return "Capital";
-  if(/\b(consumption|demand|absorption)\b/.test(t)) return "Demand";
-  if(/\b(gni|income|compensation|trading gain)\b/.test(t)) return "Income";
-  if(/\b(population)\b/.test(t)) return "Population";
-  if(/\b(price|cpi|inflation|terms of trade)\b/.test(t)) return "Prices";
-  if(/\b(energy|carbon|co2)\b/.test(t)) return "Energy";
-  if(/\b(quarterly|quarter)\b/.test(t)) return "Quarterly Growth";
-  return "Other";
-}
-
-const GROUP_ORDER = [
-  "Productivity","Output","Labor","Capital","Demand","Income","Population","Prices","Energy","Quarterly Growth","Other"
-];
 
 /** -------- Data -------- */
 const PACKAGED = Array.isArray(window.APO_DATA) ? window.APO_DATA : [];
@@ -95,6 +171,9 @@ const state = {
   tsEconomy: null,
   tsCompare: [],
   tsCompareOpen: false,
+  tsLocked: false,
+  tsEcoQuery: "",
+  tsAllOn: false,
 };
 
 if(IS_ADMIN){
@@ -169,78 +248,211 @@ function switchView(view){
   renderAll();
 }
 
-/** -------- Sidebar indicators -------- */
-function renderIndicatorList(){
+/** -------- Sidebar menu (hierarchy) -------- */
+function renderMenuTree(){
   const wrap = $("#indicatorList");
   if(!wrap) return;
-  wrap.innerHTML = "";
 
-  // Grouped indicator list (mirrors the *logic* of the old dashboard categories, but with a modern UX)
-  const groups = new Map();
-  for(const ind of INDICATORS){
-    const g = ind.group || indicatorGroup(ind);
-    if(!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(ind);
-  }
-
-  // Alphabetical inside group for fast scanning
-  for(const [g, arr] of groups.entries()){
-    arr.sort((a,b)=>String(a.label).localeCompare(String(b.label)));
-  }
-
-  const orderedGroups = GROUP_ORDER.filter(g=>groups.has(g)).concat(
-    [...groups.keys()].filter(g=>!GROUP_ORDER.includes(g)).sort()
-  );
-
-  for(const g of orderedGroups){
-    const arr = groups.get(g) || [];
-    if(!arr.length) continue;
-
-    const slug = g.toLowerCase().replace(/[^a-z0-9]+/g,'_');
-    const lsKey = `apo_indGroup_${slug}_collapsed`;
-    let collapsed = localStorage.getItem(lsKey)==='1';
-
-    // If active indicator is in this group, auto-expand once
-    if(collapsed && arr.some(x=>x.id===state.indicatorId)){
-      collapsed = false;
-      localStorage.setItem(lsKey,'0');
-    }
-
-    const groupEl = document.createElement('div');
-    groupEl.className = 'indGroup';
-
-    const hdr = document.createElement('div');
-    hdr.className = 'indGroupHeader';
-    hdr.innerHTML = `<span>${esc(g)}</span><button class="indGroupToggle" aria-label="Toggle ${esc(g)}">${collapsed?'▸':'▾'}</button>`;
-
-    const body = document.createElement('div');
-    body.className = 'indGroupBody';
-    if(collapsed) body.style.display = 'none';
-
-    hdr.querySelector('button').addEventListener('click', ()=>{
-      const hidden = body.style.display === 'none';
-      body.style.display = hidden ? '' : 'none';
-      hdr.querySelector('button').textContent = hidden ? '▾' : '▸';
-      localStorage.setItem(lsKey, hidden ? '0' : '1');
-    });
-
-    for(const ind of arr){
-      const b = document.createElement('button');
-      b.className = 'indBtn' + (state.indicatorId === ind.id ? ' active' : '');
+  // If MENU_TREE is missing, fall back to flat indicators (legacy).
+  if(!Array.isArray(MENU_TREE) || !MENU_TREE.length){
+    wrap.innerHTML = "";
+    INDICATORS.forEach(ind=>{
+      const b = document.createElement("button");
+      b.className = "indBtn" + (state.indicatorId === ind.id ? " active" : "");
       b.textContent = ind.label;
-      b.addEventListener('click', ()=>{
+      b.addEventListener("click", ()=>{
         state.indicatorId = ind.id;
-        renderIndicatorList();
-        if(state.view !== 'indicators') switchView('indicators');
+        if(state.view !== "indicators") switchView("indicators");
         else renderIndicators();
       });
-      body.appendChild(b);
-    }
-
-    groupEl.appendChild(hdr);
-    groupEl.appendChild(body);
-    wrap.appendChild(groupEl);
+      wrap.appendChild(b);
+    });
+    return;
   }
+
+  // Default open state (only on first load) — so "Collapse all" really collapses.
+  if(!_menuInitDone && !_menuOpenGroups.size && MENU_TREE[0] && MENU_TREE[0].id){
+    _menuOpenGroups.add(MENU_TREE[0].id);
+  }
+
+  const q = (_menuQuery || "").trim().toLowerCase();
+
+  function textMatch(a){
+    if(!q) return true;
+    return String(a||"").toLowerCase().includes(q);
+  }
+
+  function modeKey(modeLabel){
+    const s = String(modeLabel||"").toLowerCase();
+    if(s.includes("nowcast")) return "nowcast";
+    if(s.includes("latest")) return "latest";
+    if(s.includes("trend")) return "trend";
+    if(s.includes("projection")) return "projection";
+    return "latest";
+  }
+
+  function closeSidebarIfMobile(){
+    const appEl = document.querySelector(".app");
+    if(!appEl) return;
+    if(window.matchMedia && window.matchMedia("(max-width: 980px)").matches){
+      appEl.classList.remove("sidebarOpen");
+    }
+  }
+
+  function goLatest(ind){
+    if(!ind) return;
+    state.indicatorId = ind.id;
+    state.mode = "data";
+    closeSidebarIfMobile();
+    switchView("indicators");
+  }
+
+  function goProjection(ind){
+    if(!ind) return;
+    state.indicatorId = ind.id;
+    state.mode = "projection";
+    closeSidebarIfMobile();
+    switchView("indicators");
+  }
+
+  function goTrend(menuIndName){
+    const code = resolveTsCodeForMenu(menuIndName);
+    if(!code){
+      showToast("Trend view is not mapped for this indicator yet (Coming soon).");
+      return;
+    }
+    state.tsIndicator = code;
+    state.tsLocked = true; // indicator already chosen from menu
+    closeSidebarIfMobile();
+    switchView("trends");
+  }
+
+  wrap.innerHTML = "";
+  MENU_TREE.forEach(group=>{
+    // Filter indicators by query
+    const visibleIndicators = (group.indicators || []).filter(mi=>{
+      if(!q) return true;
+      const resolved = resolveIndicatorForMenu(mi.name);
+      const label = resolved.ind ? resolved.ind.label : mi.name;
+      return textMatch(group.name) || textMatch(mi.name) || textMatch(label);
+    });
+    if(q && !visibleIndicators.length) return;
+
+    const groupOpen = q ? true : _menuOpenGroups.has(group.id);
+
+    const gEl = document.createElement("div");
+    gEl.className = "menuGroup";
+
+    const gBtn = document.createElement("button");
+    gBtn.className = "menuGroupBtn";
+    gBtn.innerHTML = `
+      <span>${escapeHtml(group.name)}</span>
+      <span class="chev">${groupOpen ? "▾" : "▸"}</span>
+    `;
+    gBtn.addEventListener("click", ()=>{
+      if(_menuOpenGroups.has(group.id)) _menuOpenGroups.delete(group.id);
+      else _menuOpenGroups.add(group.id);
+      saveMenuOpenState();
+      renderMenuTree();
+    });
+
+    gEl.appendChild(gBtn);
+
+    const items = document.createElement("div");
+    items.className = "menuItems";
+    items.style.display = groupOpen ? "block" : "none";
+
+    visibleIndicators.forEach(mi=>{
+      const resolved = resolveIndicatorForMenu(mi.name);
+      const ind = resolved.ind;
+      const ref = ind ? (inferRefPeriodFromLabel(ind.label) || "2023") : "YYYY";
+      const hasLatest = !!ind;
+      const hasProj = !!(ind && ind.proj && DATA.some(r=>r && isNum(r[ind.proj])));
+      const hasTrend = !!resolveTsCodeForMenu(mi.name);
+
+      const indKey = `${group.id}||${mi.id}`;
+      const open = q ? true : _menuOpenIndicators.has(indKey);
+
+      const card = document.createElement("div");
+      card.className = "menuInd";
+
+      const header = document.createElement("div");
+      header.className = "menuIndHeader";
+
+      const btn = document.createElement("button");
+      btn.className = "menuIndBtn" + (ind && state.indicatorId === ind.id ? " active" : "");
+      btn.innerHTML = `
+        <span class="menuIndLabel">${escapeHtml(cleanIndicatorTitle(mi.name || (ind ? ind.label : "")))}</span>
+        <span class="chev">${open ? "▾" : "▸"}</span>
+      `;
+      btn.addEventListener("click", ()=>{
+        if(_menuOpenIndicators.has(indKey)) _menuOpenIndicators.delete(indKey);
+        else _menuOpenIndicators.add(indKey);
+        saveMenuOpenState();
+        renderMenuTree();
+      });
+
+      const badge = document.createElement("span");
+      badge.className = "menuBadge " + (ind ? "ok" : "soon");
+      badge.textContent = ind ? "Available" : "Coming soon";
+
+      header.appendChild(btn);
+      header.appendChild(badge);
+      card.appendChild(header);
+
+      const modes = document.createElement("div");
+      modes.className = "menuModes";
+      modes.style.display = open ? "block" : "none";
+
+      (mi.modes || []).forEach(m=>{
+        const k = modeKey(m);
+        let label = m;
+        let disabled = false;
+        let active = false;
+
+        if(k === "latest"){
+          label = `Latest available (official): ${ref}`;
+          disabled = !hasLatest;
+          active = !!(ind && state.view === "indicators" && state.indicatorId === ind.id && state.mode === "data");
+        }else if(k === "projection"){
+          label = "Projection";
+          disabled = !hasProj;
+          active = !!(ind && state.view === "indicators" && state.indicatorId === ind.id && state.mode === "projection");
+        }else if(k === "trend"){
+          label = "Trend & Compare";
+          disabled = !hasTrend;
+          active = (state.view === "trends" && resolveTsCodeForMenu(mi.name) === state.tsIndicator);
+        }else if(k === "nowcast"){
+          label = "Nowcast (estimate)";
+          disabled = true; // UI placeholder only
+        }
+
+        const b = document.createElement("button");
+        b.className = "modeBtn" + (active ? " active" : "");
+        b.innerHTML = `<span class="modeDot" aria-hidden="true"></span><span class="modeText">${escapeHtml(label)}</span>`;
+        if(disabled) b.disabled = true;
+        b.addEventListener("click", ()=>{
+          if(disabled){
+            showToast("This view is coming soon.");
+            return;
+          }
+          if(k === "latest") goLatest(ind);
+          else if(k === "projection") goProjection(ind);
+          else if(k === "trend") goTrend(mi.name);
+          else showToast("This view is coming soon.");
+        });
+        modes.appendChild(b);
+      });
+
+      card.appendChild(modes);
+      items.appendChild(card);
+    });
+
+    gEl.appendChild(items);
+    wrap.appendChild(gEl);
+  });
+
+  _menuInitDone = true;
 }
 
 /** -------- Summary -------- */
@@ -939,25 +1151,48 @@ GDP: ${isNum(p.s)?fmtNumber(p.s):"–"}</title>
 
   // ---- Render ----
   root.innerHTML = `
-    <div class="grid">
-      <div class="tile clickable" id="tileTotalGdp">
-        <div class="tileLabel">Total GDP in 2023 (Billion USD, 2023)</div>
-        <div class="tileValue">${fmtNumber(gdp, 1)}T</div>
-        <div class="tileSub">PPP-based (Databook convention) · Click to view breakdown</div>
-      </div>
-      <div class="tile">
-        <div class="tileLabel">Avg. GDP growth (2022–23)</div>
-        <div class="tileValue">${isNum(gdpGrowth) ? fmtNumber(gdpGrowth, 1) + "%" : "–"}</div>
-        <div class="tileSub">Average over economies with available data</div>
-      </div>
-      <div class="tile">
-        <div class="tileLabel">Avg. TFP growth (2022–23)</div>
-        <div class="tileValue">${isNum(tfp) ? fmtNumber(tfp, 1) + "%" : "–"}</div>
-        <div class="tileSub">Average over economies with available data</div>
-      </div>
-    </div>
+    <div class="summaryStack">
 
-    ${execSummaryHtml}
+      <div class="card nowcastCard">
+        <div class="cardHeader">
+          <div>
+            <div class="cardTitle">Nowcast (estimate) summary</div>
+            <div class="cardSub">Placeholder section — this will show near-term nowcast signals once the nowcast dataset is defined.</div>
+          </div>
+        </div>
+        <div class="nowcastBody">
+          <div class="muted">Coming soon: quick nowcast cards (e.g., short-run growth, inflation, labor signals) with economy-level highlights.</div>
+        </div>
+      </div>
+
+      <div class="card summarySnapshotCard">
+        <div class="cardHeader">
+          <div>
+            <div class="cardTitle">Key snapshot</div>
+            <div class="cardSub">Quick portfolio indicators computed from the current dataset (missing values skipped).</div>
+          </div>
+          <button class="btnInlineGhost" id="tileTotalGdp" title="Open GDP breakdown">GDP breakdown</button>
+        </div>
+        <div class="kpiGrid kpiGrid3">
+          <div class="kpi">
+            <div class="kpiK">Total GDP (PPP)</div>
+            <div class="kpiV">${isNum(gdp) ? fmtNumber(gdp, 1) : "–"}</div>
+            <div class="kpiS">Billion USD, 2023</div>
+          </div>
+          <div class="kpi">
+            <div class="kpiK">Avg. GDP growth</div>
+            <div class="kpiV">${isNum(gdpGrowth) ? fmtNumber(gdpGrowth, 1) + "%" : "–"}</div>
+            <div class="kpiS">2022–23</div>
+          </div>
+          <div class="kpi">
+            <div class="kpiK">Avg. TFP growth</div>
+            <div class="kpiV">${isNum(tfp) ? fmtNumber(tfp, 1) + "%" : "–"}</div>
+            <div class="kpiS">2022–23</div>
+          </div>
+        </div>
+      </div>
+
+      ${execSummaryHtml}
     ${portSegHtml}
     ${comparatorHtml}
     ${concHtml}
@@ -1089,6 +1324,7 @@ GDP: ${isNum(p.s)?fmtNumber(p.s):"–"}</title>
       </div>
 
       <div class="cardSub" style="margin-top:10px;">Validation: Each leaderboard is computed by sorting numeric values from the corresponding indicator column.</div>
+    </div>
     </div>
   `;
 
@@ -1537,6 +1773,30 @@ function renderProfile(){
   }
 }
 
+
+function cleanIndicatorTitle(title){
+  if(!title) return title;
+  let t = String(title).trim();
+
+  // Remove trailing parenthetical only if it contains year and/or units
+  t = t.replace(/\s*\(([^)]*)\)\s*$/, (m, inside)=>{
+    const s = String(inside||"").toLowerCase();
+    const hasYear = /\b(19|20)\d{2}\b/.test(s) || /\b(19|20)\d{2}\s*[-–]\s*\d{2,4}\b/.test(s);
+    const hasUnits = /(usd|ppp|thousand|million|billion|percent|%|persons|workers|hours|index|points)/.test(s);
+    if(hasYear || hasUnits) return "";
+    return m;
+  });
+
+  // Remove trailing "in 2023" / "in 2022–23"
+  t = t.replace(/\s+in\s+\b(19|20)\d{2}(\s*[-–]\s*\d{2,4})?\b\s*$/i, "");
+
+  // Remove trailing standalone year " 2023"
+  t = t.replace(/\s+\b(19|20)\d{2}\b\s*$/i, "");
+
+  t = t.replace(/\s{2,}/g, " ").trim();
+  return t;
+}
+
 function escapeHtml(s){
   if(typeof s !== "string") return "–";
   // preserve bullets/newlines safely
@@ -1897,7 +2157,7 @@ async function handleIndicatorJsonUpload(file){
 
   INDICATORS = defs;
   saveLS("apo_indicator_defs_v1", INDICATORS);
-  renderIndicatorList();
+  renderMenuTree();
   renderAll();
 }
 
@@ -1964,41 +2224,64 @@ function initTrendsUI(){
 
   const indSel = document.querySelector("#tsIndicatorSelect");
   const ecoSel = document.querySelector("#tsEconomySelect");
-  const compareBtn = document.querySelector("#tsCompareBtn");
-  const comparePanel = document.querySelector("#tsComparePanel");
+  const ecoSearch = document.querySelector("#tsEconomySearch");
+  const allOnBtn = document.querySelector("#tsAllOn");
+  const allOffBtn = document.querySelector("#tsAllOff");
+  const picker = document.querySelector("#tsIndicatorPicker");
+
+  function syncPickerVisibility(){
+    const locked = !!state.tsLocked;
+    if(picker) picker.style.display = locked ? "none" : "flex";
+  }
 
   const onChange = () => {
-    state.tsIndicator = indSel.value || state.tsIndicator;
-    state.tsEconomy = ecoSel.value || state.tsEconomy;
+    if(indSel) state.tsIndicator = indSel.value || state.tsIndicator;
+    if(ecoSel) state.tsEconomy = ecoSel.value || state.tsEconomy;
     // remove primary from compare list if present
     state.tsCompare = (state.tsCompare || []).filter(x => x && x !== state.tsEconomy);
     renderTrends();
   };
 
-  indSel.addEventListener("change", onChange);
-  ecoSel.addEventListener("change", onChange);
+  if(indSel){
+    indSel.addEventListener("change", ()=>{ state.tsLocked = false; syncPickerVisibility(); onChange(); });
+  }
+  if(ecoSel) ecoSel.addEventListener("change", onChange);
 
-  compareBtn.addEventListener("click", () => {
-    state.tsCompareOpen = !state.tsCompareOpen;
-    comparePanel.classList.toggle("hidden", !state.tsCompareOpen);
-  });
+  if(ecoSearch){
+    ecoSearch.addEventListener("input", ()=>{
+      state.tsEcoQuery = ecoSearch.value || "";
+      renderTrends();
+    });
+  }
+
+  if(allOnBtn){
+    allOnBtn.addEventListener("click", ()=>{ state.tsAllOn = true; renderTrends(); state.tsAllOn = false; });
+  }
+  if(allOffBtn){
+    allOffBtn.addEventListener("click", ()=>{ state.tsCompare = []; renderTrends(); });
+  }
+
+  syncPickerVisibility();
 
   // lazy-load meta and populate controls
   loadTsMeta()
     .then(meta => {
       populateTrendsControls(meta);
       renderTrends();
+      syncPickerVisibility();
     })
     .catch(err => {
-      document.querySelector("#tsChart").innerHTML =
-        `<div class="muted">Unable to load trends data. ${escapeHtml(err.message || String(err))}</div>`;
+      const el = document.querySelector("#tsChart");
+      if(el) el.innerHTML = `<div class="muted">Unable to load trends data. ${escapeHtml(err.message || String(err))}</div>`;
     });
 }
 
 function populateTrendsControls(meta){
   const indSel = document.querySelector("#tsIndicatorSelect");
   const ecoSel = document.querySelector("#tsEconomySelect");
-  const comparePanel = document.querySelector("#tsComparePanel");
+  const checklist = document.querySelector("#tsEconomyChecklist");
+  const labelEl = document.querySelector("#tsSelectedIndicatorLabel");
+  const subEl = document.querySelector("#tsSelectedIndicatorSub");
 
   // indicator dropdown (grouped)
   if(!indSel.dataset.populated){
@@ -2060,52 +2343,34 @@ function populateTrendsControls(meta){
   if(state.tsIndicator) indSel.value = state.tsIndicator;
   if(state.tsEconomy) ecoSel.value = state.tsEconomy;
 
-  // compare list
-  const econs = meta.economies || [];
-  comparePanel.innerHTML = `
-    <div class="compareHeader">
-      <div class="muted">Select additional economies to compare</div>
-      <div class="compareActions">
-        <button class="btnInlineGhost" id="tsAllOffBtn" type="button">All off</button>
-      </div>
-    </div>
-    <div class="compareGrid" id="tsCompareGrid"></div>
-  `;
+  // Selected indicator label
+  const ind = (meta.indicators || []).find(x => x.code === state.tsIndicator);
+  if(labelEl) labelEl.textContent = ind ? (ind.label || "Indicator") : "Indicator";
+  if(subEl){
+    subEl.textContent = state.tsLocked ? "Selected from the indicator menu." : "You can change the indicator here.";
+  }
 
-  const grid = comparePanel.querySelector("#tsCompareGrid");
-  econs.forEach(e => {
-    if(e.abbr === state.tsEconomy) return;
-    const id = `ts_cmp_${e.abbr}`;
-    const item = document.createElement("label");
-    item.className = "compareItem";
-    item.innerHTML = `
-      <input type="checkbox" id="${id}" value="${escapeHtml(e.abbr)}">
-      <span>${escapeHtml(e.short || e.abbr)}</span>
-    `;
-    grid.appendChild(item);
-  });
+  // Economy checklist (Explorer-style list)
+  if(checklist && !checklist.dataset.populated){
+    checklist.dataset.populated = "1";
+    checklist.innerHTML = (meta.economies || []).map(e=>{
+      const nm = e.short || e.abbr;
+      return `<label class="trendCheckItem"><input type="checkbox" value="${escapeHtml(e.abbr)}"/><span>${escapeHtml(nm)}</span></label>`;
+    }).join("");
 
-  // apply current compare selections
-  const setChecks = () => {
-    (state.tsCompare || []).forEach(abbr => {
-      const box = grid.querySelector(`input[value="${CSS.escape(abbr)}"]`);
-      if(box) box.checked = true;
+    checklist.addEventListener("change", ()=>{
+      const boxes = Array.from(checklist.querySelectorAll('input[type="checkbox"]'));
+      const checked = boxes.filter(b=>b.checked).map(b=>b.value);
+      if(!checked.length){
+        const first = boxes[0];
+        if(first){ first.checked = true; state.tsEconomy = first.value; state.tsCompare = []; }
+      } else {
+        state.tsEconomy = checked[0];
+        state.tsCompare = checked.slice(1);
+      }
+      renderTrends();
     });
-  };
-  setChecks();
-
-  // events
-  grid.addEventListener("change", () => {
-    const chosen = Array.from(grid.querySelectorAll("input[type=checkbox]:checked")).map(x => x.value);
-    state.tsCompare = chosen;
-    renderTrends();
-  });
-
-  comparePanel.querySelector("#tsAllOffBtn").addEventListener("click", () => {
-    state.tsCompare = [];
-    Array.from(grid.querySelectorAll("input[type=checkbox]")).forEach(x => x.checked = false);
-    renderTrends();
-  });
+  }
 }
 
 function renderTrends(){
@@ -2132,6 +2397,34 @@ function renderTrends(){
 
       // ensure selects reflect state
       populateTrendsControls(meta);
+
+      // Sync checklist selections + filter
+      const checklist = document.querySelector("#tsEconomyChecklist");
+      if(checklist){
+        const boxes = Array.from(checklist.querySelectorAll('input[type="checkbox"]'));
+
+        // All on (select all) — limited to keep chart readable
+        if(state.tsAllOn){
+          // select up to 6 economies (primary + 5) to avoid clutter
+          boxes.forEach(b=> b.checked = false);
+          const take = boxes.slice(0, Math.min(6, boxes.length));
+          take.forEach(b=> b.checked = true);
+          const checked = take.map(b=>b.value);
+          state.tsEconomy = checked[0] || state.tsEconomy;
+          state.tsCompare = checked.slice(1);
+        }
+
+        const selected = new Set([state.tsEconomy, ...(state.tsCompare||[])]);
+        boxes.forEach(b=>{ b.checked = selected.has(b.value); });
+
+        const q = (state.tsEcoQuery || "").trim().toLowerCase();
+        boxes.forEach(b=>{
+          const item = b.closest('.trendCheckItem');
+          if(!item) return;
+          const t = (item.textContent || "").toLowerCase();
+          item.style.display = (!q || t.includes(q)) ? "" : "none";
+        });
+      }
 
       const indCode = state.tsIndicator;
       const ind = (meta.indicators || []).find(x => x.code === indCode);
@@ -2163,7 +2456,11 @@ function renderTrends(){
     })
     .catch(err => {
       if(token !== _tsRenderToken) return;
-      chartEl.innerHTML = `<div class="muted">Unable to render trends. ${escapeHtml(err.message || String(err))}</div>`;
+      const msg = (err && err.message) ? err.message : String(err);
+      const hint = /Failed to fetch/i.test(msg)
+        ? " (Tip: open via GitHub Pages or a local web server — browsers block fetch() on file://)"
+        : "";
+      chartEl.innerHTML = `<div class="muted">Unable to render trends. ${escapeHtml(msg)}${escapeHtml(hint)}</div>`;
     });
 }
 
@@ -2394,7 +2691,7 @@ function drawTimeSeriesChart(container, years, seriesList, opts){
 /** -------- Render router -------- */
 function renderAll(){
   updateCounts();
-  renderIndicatorList();
+  renderMenuTree();
 
   if(state.view === "summary") renderSummary();
   if(state.view === "indicators") renderIndicators();
@@ -2407,18 +2704,65 @@ function renderAll(){
 function init(){
   setTheme(state.theme);
   autoExtendIndicatorsFromData();
-  renderIndicatorList();
+  renderMenuTree();
   updateCounts();
 
   $$(".navItem").forEach(b=>{
-    b.addEventListener("click", ()=> switchView(b.dataset.view));
+    b.addEventListener("click", ()=>{ switchView(b.dataset.view); closeSidebarIfMobile(); });
   });
 
   const home = $("#brandHome");
   const homeGo = ()=>{ switchView("summary"); };
   if(home){
-    home.addEventListener("click", homeGo);
-    home.addEventListener("keydown",(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); homeGo(); }});
+    home.addEventListener("click", ()=>{ homeGo(); closeSidebarIfMobile(); });
+    home.addEventListener("keydown",(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); homeGo(); closeSidebarIfMobile(); }});
+  }
+
+  // Sidebar (mobile drawer)
+  const appEl = document.querySelector(".app");
+  const sbToggle = $("#sidebarToggle");
+  const sbOverlay = $("#sidebarOverlay");
+  function closeSidebarIfMobile(){
+    if(!appEl) return;
+    if(window.matchMedia && window.matchMedia("(max-width: 980px)").matches){
+      appEl.classList.remove("sidebarOpen");
+    }
+  }
+  function toggleSidebar(){
+    if(!appEl) return;
+    appEl.classList.toggle("sidebarOpen");
+  }
+  if(sbToggle) sbToggle.addEventListener("click", toggleSidebar);
+  if(sbOverlay) sbOverlay.addEventListener("click", closeSidebarIfMobile);
+
+  // Sidebar menu controls
+  const menuSearch = $("#menuSearch");
+  if(menuSearch){
+    menuSearch.addEventListener("input", (e)=>{
+      _menuQuery = e.target.value || "";
+      renderMenuTree();
+    });
+  }
+  const collapseAllBtn = $("#menuCollapseAllBtn");
+  const expandAllBtn = $("#menuExpandAllBtn");
+  if(collapseAllBtn){
+    collapseAllBtn.addEventListener("click", ()=>{
+      _menuOpenGroups = new Set();
+      _menuOpenIndicators = new Set();
+      saveMenuOpenState();
+      renderMenuTree();
+    });
+  }
+  if(expandAllBtn){
+    expandAllBtn.addEventListener("click", ()=>{
+      _menuOpenGroups = new Set((MENU_TREE||[]).map(g=>g.id).filter(Boolean));
+      _menuOpenIndicators = new Set();
+      (MENU_TREE||[]).forEach(g=>{
+        (g.indicators||[]).forEach(i=> _menuOpenIndicators.add(`${g.id}||${i.id}`));
+      });
+      saveMenuOpenState();
+      renderMenuTree();
+    });
   }
 
   const search = $("#searchBox");
@@ -2469,6 +2813,7 @@ function init(){
     if(e.key === "Escape"){
       closeGdpModal();
       closeGlossary();
+      closeSidebarIfMobile();
     }
   });
 
@@ -2514,7 +2859,7 @@ function init(){
       resetIndicatorsBtn.addEventListener("click", ()=>{
         INDICATORS = deepClone(PACKAGED_INDICATORS);
         saveLS("apo_indicator_defs_v1", INDICATORS);
-        renderIndicatorList();
+        renderMenuTree();
         renderAll();
       });
     }

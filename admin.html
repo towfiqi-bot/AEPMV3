@@ -21,15 +21,22 @@
 
       <div class="nav">
         <button class="navItem active" data-view="summary">Summary</button>
-        <button class="navItem" data-view="indicators">Indicators</button>
-        <button class="navItem" data-view="profile">Country profile</button>
-        <button class="navItem" data-view="data">Data</button>
-      </div>
+<button class="navItem" data-view="profile">Country profile</button>
+</div>
 
       <div class="panel" id="indicatorPanel">
-        <div class="panelTitle">Indicators</div>
-        <div class="panelHint">Select one to compare economies</div>
-        <div class="indicatorList" id="indicatorList"></div>
+        <div class="panelTopRow">
+          <div>
+            <div class="panelTitle">Indicators</div>
+            <div class="panelHint">Browse by category; choose a view/mode.</div>
+          </div>
+          <div class="panelActions">
+            <button class="iconBtn" id="menuCollapseAllBtn" title="Collapse all" aria-label="Collapse all">−</button>
+            <button class="iconBtn" id="menuExpandAllBtn" title="Expand all" aria-label="Expand all">+</button>
+          </div>
+        </div>
+        <input class="menuSearch" id="menuSearch" placeholder="Search indicator…"/>
+        <div class="indicatorList menuTree" id="indicatorList"></div>
       </div>
 
       <div class="panel">
@@ -58,9 +65,14 @@
       </div>
     </aside>
 
+    <div class="sidebarOverlay hidden" id="sidebarOverlay"></div>
+
     <main class="main">
       <div class="topbar">
-        <div class="crumbs" id="crumbs">Summary</div>
+        <div class="topbarLeft">
+          <button class="iconBtn" id="sidebarToggle" aria-label="Open menu">☰</button>
+          <div class="crumbs" id="crumbs">Summary</div>
+        </div>
         <div class="topbarRight">
           <div class="seg" id="themeSeg" aria-label="Theme switch">
             <button class="segBtn active" data-theme="violet">Violet</button>
@@ -148,6 +160,7 @@
   </div>
 
   <script src="data.js"></script>
+  <script src="menu.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
