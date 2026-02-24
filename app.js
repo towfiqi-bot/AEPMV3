@@ -58,6 +58,7 @@ const MENU_TO_TS_CODE = {
   // Only mapped indicators will enable "Trend & Compare"; others remain "Coming soon".
   realgdp: "out_gdp_ppp_level",
   population: "pop_total_level",
+  consumerpriceindexcpi: "price_cpi_index",
   perworkerlaborproductivity: "prod_lp_per_worker_index",
   perhourlaborproductivity: "prod_lp_per_hour_index",
   tfpgrowth: "prod_tfp_index",
@@ -2394,6 +2395,12 @@ async function loadTsEconomy(abbr){
   return obj;
 }
 
+
+function syncTrendsPickerVisibility(){
+  const picker = document.querySelector("#tsIndicatorPicker");
+  if(picker) picker.style.display = state.tsLocked ? "none" : "flex";
+}
+
 function initTrendsUI(){
   if(_tsInitDone) return;
   _tsInitDone = true;
@@ -2406,8 +2413,7 @@ function initTrendsUI(){
   const picker = document.querySelector("#tsIndicatorPicker");
 
   function syncPickerVisibility(){
-    const locked = !!state.tsLocked;
-    if(picker) picker.style.display = locked ? "none" : "flex";
+    syncTrendsPickerVisibility();
   }
 
   const onChange = () => {
@@ -2480,7 +2486,7 @@ function populateTrendsControls(meta){
       items.forEach(it => {
         const opt = document.createElement("option");
         opt.value = it.code;
-        opt.textContent = `${it.label}${it.unit ? ` (${it.unit})` : ""}`;
+        opt.textContent = `${it.label}`;
         og.appendChild(opt);
       });
       indSel.appendChild(og);
@@ -2494,7 +2500,7 @@ function populateTrendsControls(meta){
       byGroup[g].forEach(it => {
         const opt = document.createElement("option");
         opt.value = it.code;
-        opt.textContent = `${it.label}${it.unit ? ` (${it.unit})` : ""}`;
+        opt.textContent = `${it.label}`;
         og.appendChild(opt);
       });
       indSel.appendChild(og);
@@ -2556,6 +2562,7 @@ function renderTrends(){
 
   // ensure controls exist and meta is loading
   initTrendsUI();
+  syncTrendsPickerVisibility();
 
   // only render chart when on trends view (avoid unnecessary fetches)
   if(state.view !== "trends") return;
