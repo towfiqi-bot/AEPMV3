@@ -2239,7 +2239,7 @@ async function loadPilotTrends(){
   if(!res.ok) throw new Error("Failed to load pilot trend_master CSV");
   const text = await res.text();
 
-  const lines = text.split(/?
+  const lines = text.split(/?
 /).filter(Boolean);
   if(lines.length < 2) throw new Error("Pilot trend CSV is empty");
 
