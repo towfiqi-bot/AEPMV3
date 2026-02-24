@@ -54,13 +54,15 @@ const MENU_TO_INDICATOR_ID = {
 /* Map wireframe indicator names -> trends time-series codes (best-effort).
    If missing, "Trend & Compare" shows as disabled. */
 const MENU_TO_TS_CODE = {
-  realgdp: "22700.0", // GDP at market price (billions of US dollars, as of 2023)
-  population: "70100.0",
-  numberofemployment: "60100.0",
-  perworkerlaborproductivity: "40300.0",
-  perhourlaborproductivity: "40200.0",
-  tfpgrowth: "40100.0",
+  // TEST BUILD (Option A): Pilot trends from Excel long-format CSV
+  // Only mapped indicators will enable "Trend & Compare"; others remain "Coming soon".
+  realgdp: "out_gdp_ppp_level",
+  population: "pop_total_level",
+  perworkerlaborproductivity: "prod_lp_per_worker_index",
+  perhourlaborproductivity: "prod_lp_per_hour_index",
+  tfpgrowth: "prod_tfp_index",
 };
+
 
 let _menuOpenGroups = new Set(loadLS("apo_menu_open_groups_v1", []) || []);
 let _menuOpenIndicators = new Set(loadLS("apo_menu_open_inds_v1", []) || []);
@@ -2189,11 +2191,121 @@ function makeDataJs(){
 
 /** -------- Trends (time series) -------- */
 
+/* =======================
+   TEST BUILD (Option A): Pilot trends loader (additive only)
+   - Uses: data/pilot/trend_master_from_excel_pilot11.csv
+   - Scope: Trend & Compare view ONLY
+   - Keeps existing data.js (Latest/Projection) unchanged
+   ======================= */
+
+const PILOT_TRENDS_ENABLED = true;
+const PILOT_TRENDS_CSV = "data/pilot/trend_master_from_excel_pilot11.csv";
+
+// Friendly names for pilot indicators (shown in the Trends picker)
+const PILOT_INDICATOR_LABELS = {
+  out_gdp_ppp_level: { label: "Real GDP (PPP), level", unit: "" },
+  pop_total_level: { label: "Population, level", unit: "" },
+  lab_hours_worked_level: { label: "Total hours worked, level", unit: "" },
+  prod_lp_per_worker_index: { label: "Labor productivity per worker (index)", unit: "Index" },
+  prod_lp_per_hour_index: { label: "Labor productivity per hour (index)", unit: "Index" },
+  prod_tfp_index: { label: "Total factor productivity (index)", unit: "Index" },
+  price_cpi_index: { label: "Consumer price index (index)", unit: "Index" },
+  out_ppp_gdp_rate: { label: "PPP conversion rate (GDP)", unit: "" },
+  dem_private_cons_ppp_level: { label: "Private consumption (PPP), level", unit: "" },
+  dem_gov_cons_ppp_level: { label: "Government consumption (PPP), level", unit: "" },
+  dem_gfcf_ppp_level: { label: "Gross fixed capital formation (PPP), level", unit: "" },
+};
+
+let _pilotTrendsLoaded = false;
+let _pilotMeta = null;               // {years, indicators, economies, groups}
+let _pilotByEco = new Map();         // abbr -> Map(indicator_id -> Map(year -> value))
+
+function _parseCsvLineSimple(line){
+  // Pilot CSV has no quoted commas; keep parser minimal & fast.
+  const parts = line.split(",");
+  if(parts.length < 4) return null;
+  const indicator_id = parts[0];
+  const economy_code = parts[1];
+  const year = parseInt(parts[2], 10);
+  const value = parts[3] === "" ? null : Number(parts[3]);
+  if(!indicator_id || !economy_code || !Number.isFinite(year)) return null;
+  return { indicator_id, economy_code, year, value: Number.isFinite(value) ? value : null };
+}
+
+async function loadPilotTrends(){
+  if(_pilotTrendsLoaded) return { meta:_pilotMeta, byEco:_pilotByEco };
+
+  const res = await fetch(PILOT_TRENDS_CSV, { cache: "no-store" });
+  if(!res.ok) throw new Error("Failed to load pilot trend_master CSV");
+  const text = await res.text();
+
+  const lines = text.split(/?
+/).filter(Boolean);
+  if(lines.length < 2) throw new Error("Pilot trend CSV is empty");
+
+  const indicatorsSet = new Set();
+  const economiesSet = new Set();
+  let minY = Infinity, maxY = -Infinity;
+
+  // Parse rows
+  for(let i=1; i<lines.length; i++){
+    const row = _parseCsvLineSimple(lines[i]);
+    if(!row) continue;
+    indicatorsSet.add(row.indicator_id);
+    economiesSet.add(row.economy_code);
+    minY = Math.min(minY, row.year);
+    maxY = Math.max(maxY, row.year);
+
+    if(!_pilotByEco.has(row.economy_code)) _pilotByEco.set(row.economy_code, new Map());
+    const ecoMap = _pilotByEco.get(row.economy_code);
+
+    if(!ecoMap.has(row.indicator_id)) ecoMap.set(row.indicator_id, new Map());
+    const indMap = ecoMap.get(row.indicator_id);
+
+    indMap.set(row.year, row.value);
+  }
+
+  if(minY === Infinity || maxY === -Infinity) throw new Error("Pilot trend CSV has no valid rows");
+
+  const years = [];
+  for(let y=minY; y<=maxY; y++) years.push(y);
+
+  const indicators = Array.from(indicatorsSet).sort().map(code=>{
+    const meta = PILOT_INDICATOR_LABELS[code] || { label: code, unit: "" };
+    return { code, label: meta.label || code, unit: meta.unit || "", group: "Pilot (Excel)" };
+  });
+
+  const economies = Array.from(economiesSet).sort().map(abbr=>({ abbr, short: abbr }));
+
+  _pilotMeta = {
+    years,
+    groups: ["Pilot (Excel)"],
+    indicators,
+    economies,
+    note: "Pilot trends (Excel-derived long-format series).",
+  };
+
+  // defaults
+  if(!state.tsIndicator && indicators.length) state.tsIndicator = indicators[0].code;
+  if(!state.tsEconomy && economies.length) state.tsEconomy = economies[0].abbr;
+
+  _pilotTrendsLoaded = true;
+  return { meta:_pilotMeta, byEco:_pilotByEco };
+}
+
 let _tsInitDone = false;
 let _tsRenderToken = 0;
 const _tsCache = new Map(); // abbr -> {economy, series}
 
 async function loadTsMeta(){
+  // TEST BUILD: Use pilot trends only for the Trends view.
+  if(PILOT_TRENDS_ENABLED){
+    const pilot = await loadPilotTrends();
+    state.tsMeta = pilot.meta;
+    return pilot.meta;
+  }
+
+  // Fallback (legacy packaged JSON)
   if(state.tsMeta) return state.tsMeta;
   const res = await fetch("data/ts_meta.json", { cache: "no-store" });
   if(!res.ok) throw new Error("Failed to load ts_meta.json");
@@ -2210,6 +2322,26 @@ async function loadTsMeta(){
 }
 
 async function loadTsEconomy(abbr){
+  // TEST BUILD: pilot data (CSV) -> match legacy shape {economy, series:{code:[...]}}
+  if(PILOT_TRENDS_ENABLED){
+    await loadPilotTrends();
+    const meta = _pilotMeta;
+    const years = (meta && meta.years) ? meta.years : [];
+    const ecoMap = _pilotByEco.get(abbr) || new Map();
+
+    // build full series object for this economy (all indicators)
+    const series = {};
+    (meta.indicators || []).forEach(ind=>{
+      const yearMap = ecoMap.get(ind.code) || new Map();
+      series[ind.code] = years.map(y => (yearMap.has(y) ? yearMap.get(y) : null));
+    });
+
+    const obj = { economy: abbr, series };
+    _tsCache.set(abbr, obj);
+    return obj;
+  }
+
+  // legacy JSON loader
   if(_tsCache.has(abbr)) return _tsCache.get(abbr);
   const res = await fetch(`data/ts/${abbr}.json`, { cache: "no-store" });
   if(!res.ok) throw new Error(`Failed to load data/ts/${abbr}.json`);
