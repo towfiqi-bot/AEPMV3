@@ -2223,6 +2223,35 @@ const PILOT_INDICATOR_LABELS = {
   dem_gfcf_ppp_level: { label: "Gross fixed capital formation (PPP), level", unit: "" },
 };
 
+// --- Pilot/UI crosswalk (keep UI labels consistent with the left menu) ---
+// The left menu uses UI-friendly names (from menu.js). The Excel pilot file uses
+// technical indicator_id codes. We map by stable codes and *display* the left-menu label.
+function buildMenuKeyToLabel(){
+  const m = new Map();
+  try{
+    (MENU_TREE||[]).forEach(g=>{
+      (g.indicators||[]).forEach(ind=>{
+        const k = _normKey(ind.name);
+        if(k) m.set(k, ind.name);
+      });
+    });
+  }catch(e){}
+  return m;
+}
+
+const _MENU_KEY_TO_LABEL = buildMenuKeyToLabel();
+const _ALLOWED_PILOT_TS_CODES = new Set(Object.values(MENU_TO_TS_CODE||{}));
+
+function pilotLabelForTsCode(code){
+  // Find the menu key that maps to this ts code
+  for(const k in (MENU_TO_TS_CODE||{})){
+    if(MENU_TO_TS_CODE[k] === code){
+      return _MENU_KEY_TO_LABEL.get(k) || (PILOT_INDICATOR_LABELS[code]?.label) || code;
+    }
+  }
+  return (PILOT_INDICATOR_LABELS[code]?.label) || code;
+}
+
 let _pilotTrendsLoaded = false;
 let _pilotMeta = null;               // {years, indicators, economies, groups}
 let _pilotByEco = new Map();         // abbr -> Map(indicator_id -> Map(year -> value))
@@ -2276,10 +2305,16 @@ async function loadPilotTrends(){
   const years = [];
   for(let y=minY; y<=maxY; y++) years.push(y);
 
-  const indicators = Array.from(indicatorsSet).sort().map(code=>{
-    const meta = PILOT_INDICATOR_LABELS[code] || { label: code, unit: "" };
-    return { code, label: meta.label || code, unit: meta.unit || "", group: "Pilot (Excel)" };
-  });
+  // Only expose pilot indicators that are mapped to the v8 menu (additive integration rule).
+  // Anything else in the pilot CSV is kept in memory but not shown in the UI yet.
+  const indicators = Array.from(indicatorsSet)
+    .filter(code => _ALLOWED_PILOT_TS_CODES.has(code))
+    .sort()
+    .map(code=>{
+      const meta = PILOT_INDICATOR_LABELS[code] || { label: code, unit: "" };
+      const label = pilotLabelForTsCode(code);
+      return { code, label, unit: meta.unit || "", group: "Pilot (Excel)" };
+    });
 
   const economies = Array.from(economiesSet).sort().map(abbr=>({ abbr, short: abbr }));
 
@@ -2291,8 +2326,11 @@ async function loadPilotTrends(){
     note: "Pilot trends (Excel-derived long-format series).",
   };
 
-  // defaults
-  if(!state.tsIndicator && indicators.length) state.tsIndicator = indicators[0].code;
+  // defaults / safety: keep tsIndicator within the allowed pilot list
+  if(indicators.length){
+    const ok = indicators.some(d=>d.code === state.tsIndicator);
+    if(!ok) state.tsIndicator = indicators[0].code;
+  }
   if(!state.tsEconomy && economies.length) state.tsEconomy = economies[0].abbr;
 
   _pilotTrendsLoaded = true;
