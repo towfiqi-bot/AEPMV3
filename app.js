@@ -149,6 +149,13 @@ function fmtNumber(x, decimals=null){
   return x.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+// Backward-compatible alias used throughout the UI rendering code.
+// Some modules call `fmt(...)` (historical name), while the canonical
+// implementation here is `fmtNumber(...)`.
+function fmt(x, decimals=null){
+  return fmtNumber(x, decimals);
+}
+
 /** -------- Data -------- */
 const PACKAGED = Array.isArray(window.APO_DATA) ? window.APO_DATA : [];
 let DATA = deepClone(PACKAGED);
